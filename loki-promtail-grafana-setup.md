@@ -16,7 +16,7 @@ chmod +x loki
 
 ## ⚙️ 2. Create Loki Configuration
 
-File: `/opt/loki-config.yaml`
+File: `sudo nano /opt/loki-config.yaml`
 
 ```yaml
 auth_enabled: false
@@ -63,7 +63,7 @@ table_manager:
 
 ## 🧩 3. Create Loki Systemd Service
 
-File: `/etc/systemd/system/loki.service`
+File: `sudo nano /etc/systemd/system/loki.service`
 
 ```ini
 [Unit]
@@ -106,7 +106,7 @@ Expected output: `Ready`
 
 ## 🌐 5. Configure Promtail on Remote Servers
 
-Create file `/etc/promtail-config.yaml`:
+Create file `sudo nano /etc/promtail-config.yaml`:
 
 ```yaml
 server:
@@ -137,7 +137,7 @@ scrape_configs:
 
 ## 🤖 6. Health Check Script
 
-Create file: `promtail-check.sh`
+Create file: `sudo nano promtail-check.sh`
 
 ```bash
 #!/bin/bash
