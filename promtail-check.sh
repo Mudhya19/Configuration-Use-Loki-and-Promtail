@@ -1,88 +1,59 @@
 #!/bin/bash
 
-set -e
+# === Configuration ===
+SCRIPT_PATH="/usr/local/bin/promtail-healthcheck.sh"
+SERVICE_PATH="/etc/systemd/system/promtail-healthcheck.service"
+TIMER_PATH="/etc/systemd/system/promtail-healthcheck.timer"
 
-# Konfigurasi Loki
-LOKI_URL="http://192.168.11.72:3100/loki/api/v1/push"
-CONFIG_PATH="/etc/promtail-config.yaml"
-SERVICE_PATH="/etc/systemd/system/promtail.service"
+cat << 'EOF' > "$SCRIPT_PATH"
+#!/bin/bash
 
-# 1. Deteksi OS dan Arsitektur
-ARCH=$(uname -m)
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+LAST_BYTES=$(curl -s http://localhost:9080/metrics | grep '^promtail_bytes_sent_total' | awk '{print $2}')
+STATE_FILE="/tmp/promtail_last_bytes"
 
-# Mapping ke format release Grafana
-if [[ "$ARCH" == "x86_64" ]]; then
-    ARCH_DL="amd64"
-elif [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
-    ARCH_DL="arm64"
-elif [[ "$ARCH" == "armv7l" ]]; then
-    ARCH_DL="armv7"
-else
-    echo "❌ Arsitektur tidak didukung: $ARCH"
-    exit 1
+if [ ! -f "$STATE_FILE" ]; then
+    echo "$LAST_BYTES" > "$STATE_FILE"
+    exit 0
 fi
 
-echo "🛠 Detected OS: $OS, ARCH: $ARCH → Download: promtail-$OS-$ARCH_DL.zip"
+PREV_BYTES=$(cat "$STATE_FILE")
+if [ "$LAST_BYTES" == "$PREV_BYTES" ]; then
+    echo "Promtail stuck, restarting..."
+    systemctl restart promtail.service
+else
+    echo "Promtail OK"
+fi
 
-# 2. Install dependensi
-apt update && apt install -y curl wget unzip
-
-# 3. Unduh dan pasang promtail
-cd /opt
-PROMTAIL_URL="https://github.com/grafana/loki/releases/latest/download/promtail-${OS}-${ARCH_DL}.zip"
-
-wget -O promtail.zip "$PROMTAIL_URL"
-unzip -o promtail.zip
-mv promtail-${OS}-${ARCH_DL} promtail
-chmod +x promtail
-rm promtail.zip
-
-# 4. Buat konfigurasi promtail
-cat <<EOF > $CONFIG_PATH
-server:
-  http_listen_port: 9080
-  grpc_listen_port: 0
-
-positions:
-  filename: /tmp/positions.yaml
-
-clients:
-  - url: $LOKI_URL
-
-scrape_configs:
-  - job_name: journal_portal_service
-    journal:
-      labels:
-        job: portal-service
-        host: __HOSTNAME__
-    relabel_configs:
-      - source_labels: ['__journal__systemd_unit']
-        regex: 'portal.service'
-        action: keep
-      - source_labels: ['__hostname__']
-        target_label: 'instance'
+echo "$LAST_BYTES" > "$STATE_FILE"
 EOF
 
-# 5. Buat systemd service
-cat <<EOF > $SERVICE_PATH
+chmod +x "$SCRIPT_PATH"
+
+cat << EOF > "$SERVICE_PATH"
 [Unit]
-Description=Promtail Service
-After=network.target
+Description=Promtail Health Check
+Wants=promtail-healthcheck.timer
 
 [Service]
-Type=simple
-ExecStart=/opt/promtail -config.file=$CONFIG_PATH
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
+Type=oneshot
+ExecStart=$SCRIPT_PATH
 EOF
 
-# 6. Enable & Start promtail
+cat << EOF > "$TIMER_PATH"
+[Unit]
+Description=Run Promtail Health Check every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+Unit=promtail-healthcheck.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
 systemctl daemon-reexec
 systemctl daemon-reload
-systemctl enable promtail
-systemctl start promtail
+systemctl enable --now promtail-healthcheck.timer
 
-echo "✅ Promtail berhasil di-install dan logs dikirim ke Loki @ $LOKI_URL"
+echo "✅ Health check setup complete."

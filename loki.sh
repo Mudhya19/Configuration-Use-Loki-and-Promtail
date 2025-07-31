@@ -6,61 +6,65 @@ sudo apt update && sudo apt upgrade -y
 
 # ========= INSTALL LOKI =========
 echo "[*] Installing Loki..."
-wget -qO loki-linux-amd64.zip https://github.com/grafana/loki/releases/latest/download/loki-linux-amd64.zip
+cd /opt
+wget https://github.com/grafana/loki/releases/latest/download/loki-linux-amd64.zip
 unzip loki-linux-amd64.zip
-chmod +x loki-linux-amd64
+mv loki-linux-amd64 loki
+chmod +x loki
 sudo mv loki-linux-amd64 /usr/local/bin/loki
 
 cat <<EOF | sudo tee /etc/loki-config.yaml
 auth_enabled: false
+
 server:
   http_listen_port: 3100
-  grpc_listen_port: 9095
+  log_level: info
+
 ingester:
   lifecycler:
     ring:
       kvstore:
         store: inmemory
       replication_factor: 1
-    final_sleep: 0s
   chunk_idle_period: 5m
-  chunk_retain_period: 30s
-  max_transfer_retries: 0
+  max_chunk_age: 1h
+
 schema_config:
   configs:
-  - from: 2025-07-30
-    store: boltdb-shipper
-    object_store: filesystem
-    schema: v11
-    index:
-      prefix: index_
-      period: 24h
+    - from: 2022-01-01
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v12
+      index:
+        prefix: index_
+        period: 24h
+
 storage_config:
   boltdb_shipper:
     active_index_directory: /tmp/loki/index
-    cache_location: /tmp/loki/boltdb-cache
-    shared_store: filesystem
+    cache_location: /tmp/loki/cache
   filesystem:
     directory: /tmp/loki/chunks
+
 limits_config:
-  enforce_metric_name: false
   reject_old_samples: true
   reject_old_samples_max_age: 168h
-chunk_store_config:
-  max_look_back_period: 0s
+  allow_structured_metadata: false
+
 table_manager:
   retention_deletes_enabled: true
-  retention_period: 168h
+  retention_period: 120h
 EOF
 
 # ====== SYSTEMD FOR LOKI ======
 cat <<EOF | sudo tee /etc/systemd/system/loki.service
 [Unit]
-Description=Loki Log Aggregator
+Description=Loki Log Aggregation
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/loki -config.file=/etc/loki-config.yaml
+Type=simple
+ExecStart=/opt/loki -config.file=/opt/loki-config.yaml
 Restart=always
 
 [Install]
@@ -70,6 +74,8 @@ EOF
 sudo systemctl daemon-reexec
 sudo systemctl daemon-reload
 sudo systemctl enable --now loki
+sudo systemctl status loki
+curl http://localhost:3100/ready
 
 # ========= INSTALL GRAFANA =========
 # echo "[*] Installing Grafana..."
